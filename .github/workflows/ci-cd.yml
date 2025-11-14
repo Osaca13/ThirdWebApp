@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ master, develop ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ master, develop ]
 
 env:
   REGISTRY: ghcr.io
@@ -85,12 +85,12 @@ jobs:
     - name: Analyze code with .NET analyzers
       run: dotnet build --no-restore --configuration Release /p:EnforceCodeStyleInBuild=true /p:TreatWarningsAsErrors=false
 
-    - name: Run SonarCloud scan
-      uses: SonarSource/sonarcloud-github-action@master
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      continue-on-error: true
+    # - name: Run SonarCloud scan
+    #   uses: SonarSource/sonarcloud-github-action@master
+    #   env:
+    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    #   continue-on-error: true
 
   deploy-dev:
     needs: build
@@ -162,44 +162,44 @@ jobs:
         echo "✅ Despliegue a producción completado"
       continue-on-error: true
 
-    - name: Slack notification on success
-      if: success()
-      uses: slackapi/slack-github-action@v1
-      with:
-        payload: |
-          {
-            "text": "✅ Despliegue a producción exitoso",
-            "blocks": [
-              {
-                "type": "section",
-                "text": {
-                  "type": "mrkdwn",
-                  "text": "✅ *Despliegue a Producción Exitoso*\n*Rama:* main\n*Commit:* ${{ github.sha }}"
-                }
-              }
-            ]
-          }
-      env:
-        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      continue-on-error: true
+    # - name: Slack notification on success
+    #   if: success()
+    #   uses: slackapi/slack-github-action@v1
+    #   with:
+    #     payload: |
+    #       {
+    #         "text": "✅ Despliegue a producción exitoso",
+    #         "blocks": [
+    #           {
+    #             "type": "section",
+    #             "text": {
+    #               "type": "mrkdwn",
+    #               "text": "✅ *Despliegue a Producción Exitoso*\n*Rama:* main\n*Commit:* ${{ github.sha }}"
+    #             }
+    #           }
+    #         ]
+    #       }
+    #   env:
+    #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    #   continue-on-error: true
 
-    - name: Slack notification on failure
-      if: failure()
-      uses: slackapi/slack-github-action@v1
-      with:
-        payload: |
-          {
-            "text": "❌ Error en despliegue a producción",
-            "blocks": [
-              {
-                "type": "section",
-                "text": {
-                  "type": "mrkdwn",
-                  "text": "❌ *Error en Despliegue a Producción*\n*Rama:* main\n*Commit:* ${{ github.sha }}\n*Log:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-                }
-              }
-            ]
-          }
-      env:
-        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      continue-on-error: true
+    # - name: Slack notification on failure
+    #   if: failure()
+    #   uses: slackapi/slack-github-action@v1
+    #   with:
+    #     payload: |
+    #       {
+    #         "text": "❌ Error en despliegue a producción",
+    #         "blocks": [
+    #           {
+    #             "type": "section",
+    #             "text": {
+    #               "type": "mrkdwn",
+    #               "text": "❌ *Error en Despliegue a Producción*\n*Rama:* main\n*Commit:* ${{ github.sha }}\n*Log:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+    #             }
+    #           }
+    #         ]
+    #       }
+    #   env:
+    #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    #   continue-on-error: true
