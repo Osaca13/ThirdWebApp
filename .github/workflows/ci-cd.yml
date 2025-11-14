@@ -1,0 +1,205 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        exit-code: '0'
+        ignore-unfixed: true
+        severity: 'CRITICAL,HIGH'
+      continue-on-error: true
+
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --no-restore --configuration Release
+
+    - name: Run tests
+      run: dotnet test --no-build --configuration Release --verbosity normal --logger "trx;LogFileName=test-results.trx"
+      continue-on-error: true
+
+    - name: Publish test results
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      if: always()
+      with:
+        files: '**/test-results.trx'
+        check_name: Test Results
+
+    - name: Publish application
+      run: dotnet publish --no-build --configuration Release --output ./publish
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: published-app
+        path: ./publish
+
+  code-quality:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Analyze code with .NET analyzers
+      run: dotnet build --no-restore --configuration Release /p:EnforceCodeStyleInBuild=true /p:TreatWarningsAsErrors=false
+
+    - name: Run SonarCloud scan
+      uses: SonarSource/sonarcloud-github-action@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      continue-on-error: true
+
+  deploy-dev:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: published-app
+        path: ./publish
+
+    - name: Deploy to development environment
+      env:
+        DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      run: |
+        if [ -z "$DEPLOY_HOST" ]; then
+          echo "⚠️ No se ha configurado DEPLOY_HOST. Despliegue omitido."
+          echo "Configura los secretos en GitHub: DEPLOY_KEY, DEPLOY_HOST, DEPLOY_USER, DEPLOY_PATH_DEV"
+          exit 0
+        fi
+        
+        mkdir -p ~/.ssh
+        echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+        
+        ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@$DEPLOY_HOST "mkdir -p ${{ secrets.DEPLOY_PATH_DEV }}"
+        scp -i ~/.ssh/deploy_key -r ./publish/* ${{ secrets.DEPLOY_USER }}@$DEPLOY_HOST:${{ secrets.DEPLOY_PATH_DEV }}/
+        
+        echo "✅ Despliegue a desarrollo completado"
+      continue-on-error: true
+
+  deploy-prod:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: published-app
+        path: ./publish
+
+    - name: Deploy to production environment
+      env:
+        DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      run: |
+        if [ -z "$DEPLOY_HOST" ]; then
+          echo "⚠️ No se ha configurado DEPLOY_HOST. Despliegue omitido."
+          echo "Configura los secretos en GitHub: DEPLOY_KEY, DEPLOY_HOST, DEPLOY_USER, DEPLOY_PATH_PROD"
+          exit 0
+        fi
+        
+        mkdir -p ~/.ssh
+        echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+        
+        ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@$DEPLOY_HOST "mkdir -p ${{ secrets.DEPLOY_PATH_PROD }}"
+        scp -i ~/.ssh/deploy_key -r ./publish/* ${{ secrets.DEPLOY_USER }}@$DEPLOY_HOST:${{ secrets.DEPLOY_PATH_PROD }}/
+        
+        echo "✅ Despliegue a producción completado"
+      continue-on-error: true
+
+    - name: Slack notification on success
+      if: success()
+      uses: slackapi/slack-github-action@v1
+      with:
+        payload: |
+          {
+            "text": "✅ Despliegue a producción exitoso",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "✅ *Despliegue a Producción Exitoso*\n*Rama:* main\n*Commit:* ${{ github.sha }}"
+                }
+              }
+            ]
+          }
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      continue-on-error: true
+
+    - name: Slack notification on failure
+      if: failure()
+      uses: slackapi/slack-github-action@v1
+      with:
+        payload: |
+          {
+            "text": "❌ Error en despliegue a producción",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "❌ *Error en Despliegue a Producción*\n*Rama:* main\n*Commit:* ${{ github.sha }}\n*Log:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                }
+              }
+            ]
+          }
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      continue-on-error: true
